@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SKYTRACK // ArUco 3D Workspace</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Three.js & OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div class="glow-bg"></div>
+    
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <span class="logo-accent">//</span>
+                <h1>SKYTRACK <span class="sub-logo">3D WORKSPACE</span></h1>
+            </div>
+            <div class="status-indicator">
+                <span class="status-dot disconnected" id="connection-dot"></span>
+                <span class="status-text" id="connection-text">Desconectado</span>
+            </div>
+        </header>
+
+        <!-- Main Content Grid -->
+        <main class="app-grid">
+            <!-- Left Panel: Webcam feed & Calibration -->
+            <section class="panel left-panel">
+                <!-- Webcam Card -->
+                <div class="card webcam-card">
+                    <div class="card-header">
+                        <h2>CÁMARA EN TIEMPO REAL</h2>
+                        <span class="card-badge" id="tracking-badge">Sin Señal</span>
+                    </div>
+                    <div class="video-container">
+                        <img id="webcam-stream" src="" alt="Esperando flujo de video...">
+                        <div class="tracking-overlay" id="tracking-overlay"></div>
+                    </div>
+                </div>
+
+                <!-- Calibration Card with Tabs -->
+                <div class="card calibration-card">
+                    <div class="tab-header">
+                        <button class="tab-btn active" data-tab="tab-pos">Posición</button>
+                        <button class="tab-btn" data-tab="tab-img">Imagen</button>
+                        <button class="tab-btn" data-tab="tab-aruco">ArUco</button>
+                        <button class="tab-btn" data-tab="tab-cam">Cámara</button>
+                    </div>
+                    <div class="card-body">
+                        
+                        <!-- TAB 1: Posición -->
+                        <div id="tab-pos" class="tab-content active">
+                            <div class="control-group">
+                                <label for="marker-size-input">Tamaño del Marcador ArUco (cm):</label>
+                                <div class="input-with-unit">
+                                    <input type="number" id="marker-size-input" value="5.0" min="2.0" max="30.0" step="0.5">
+                                    <span class="unit">cm</span>
+                                </div>
+                                <span class="control-hint">Mide el ancho del cuadrado negro en tu marcador físico.</span>
+                            </div>
+                            
+                            <div class="control-group">
+                                <label for="focal-length-slider">Factor Focal de Cámara: <span id="focal-val">0.80</span></label>
+                                <input type="range" id="focal-length-slider" min="0.4" max="2.0" step="0.05" value="0.80">
+                                <span class="control-hint">Ajusta si la distancia en Z (profundidad) no coincide con la real.</span>
+                            </div>
+
+                            <button id="btn-zero-calibrate" class="btn btn-primary" style="margin-top: 10px;">
+                                Establecer Cero Posición (Tara)
+                            </button>
+                            <button id="btn-reset-calibration" class="btn btn-secondary">
+                                Restablecer Ajustes
+                            </button>
+                        </div>
+
+                        <!-- TAB 2: Imagen -->
+                        <div id="tab-img" class="tab-content">
+                            <div class="control-group-row" style="display: flex; justify-content: space-between; align-items: center;">
+                                <label for="auto-contrast-checkbox" style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">Auto-Optimizar Iluminación (CLAHE):</label>
+                                <input type="checkbox" id="auto-contrast-checkbox" checked style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-cyan);">
+                            </div>
+                            <span class="control-hint" style="margin-top: -8px;">Corrige sombras y reflejos locales de forma adaptativa.</span>
+
+                            <div class="control-group">
+                                <label for="clahe-clip-slider">Límite Contraste CLAHE: <span id="clahe-clip-val">3.0</span></label>
+                                <input type="range" id="clahe-clip-slider" min="1.0" max="10.0" step="0.5" value="3.0">
+                                <span class="control-hint">Límite de amplificación de contraste para CLAHE.</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="clahe-grid-slider">Grilla de CLAHE (Px): <span id="clahe-grid-val">8</span></label>
+                                <input type="range" id="clahe-grid-slider" min="2" max="24" step="2" value="8">
+                                <span class="control-hint">Tamaño del bloque de procesamiento local (ej. 8x8 píxeles).</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="noise-reduction-select">Filtro de Ruido (Reducción de Puntos):</label>
+                                <div class="select-container" style="position: relative; display: flex; align-items: center;">
+                                    <select id="noise-reduction-select" style="width: 100%; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--card-border); border-radius: 8px; color: var(--text-primary); padding: 10px 12px; font-family: var(--font-mono); font-size: 0.95rem; outline: none; transition: border-color 0.2s; cursor: pointer; -webkit-appearance: none; -moz-appearance: none; appearance: none;">
+                                        <option value="0" selected>Sin Filtro (Papel Liso)</option>
+                                        <option value="3">Bajo (Mediana 3x3) - Recomendado para impresora ruidosa</option>
+                                        <option value="5">Medio (Mediana 5x5)</option>
+                                        <option value="7">Alto (Mediana 7x7)</option>
+                                    </select>
+                                    <span style="position: absolute; right: 14px; pointer-events: none; color: var(--accent-blue); font-size: 0.8rem;">▼</span>
+                                </div>
+                                <span class="control-hint">Elimina puntos blancos y negros (textura del papel/impresión) para unir los bordes.</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="brightness-slider">Brillo Manual: <span id="brightness-val">0</span></label>
+                                <input type="range" id="brightness-slider" min="-100" max="100" step="5" value="0">
+                            </div>
+
+                            <div class="control-group">
+                                <label for="contrast-slider">Contraste Manual: <span id="contrast-val">1.0</span></label>
+                                <input type="range" id="contrast-slider" min="0.5" max="3.0" step="0.1" value="1.0">
+                            </div>
+
+                            <div class="control-group-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">
+                                <label for="show-processed-checkbox" style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">Ver Imagen Binarizada (B&N):</label>
+                                <input type="checkbox" id="show-processed-checkbox" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-cyan);">
+                            </div>
+                            <span class="control-hint" style="margin-top: -8px;">Muestra exactamente el mapa binario umbralizado que lee OpenCV.</span>
+
+                            <hr style="border: 0; border-top: 1px solid var(--card-border); margin: 15px 0;">
+
+                            <div class="control-group-row" style="display: flex; justify-content: space-between; align-items: center;">
+                                <label for="bilateral-checkbox" style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">Filtro Bilateral (Niebla/Ruido):</label>
+                                <input type="checkbox" id="bilateral-checkbox" checked style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-cyan);">
+                            </div>
+                            <span class="control-hint" style="margin-top: -8px;">Suaviza el ruido conservando los bordes nítidos de los marcadores.</span>
+
+                            <div class="control-group-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+                                <label for="morphology-checkbox" style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">Operación Morfológica (Limpiar):</label>
+                                <input type="checkbox" id="morphology-checkbox" checked style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-cyan);">
+                            </div>
+                            <span class="control-hint" style="margin-top: -8px;">Cierra huecos de suciedad y abre huecos negros en zonas blancas.</span>
+
+                            <div class="control-group">
+                                <label for="morphology-kernel-slider">Radio Limpieza Morfológica: <span id="morphology-kernel-val">3</span></label>
+                                <input type="range" id="morphology-kernel-slider" min="3" max="7" step="2" value="3">
+                                <span class="control-hint">Tamaño del radio de píxeles a limpiar en la matriz.</span>
+                            </div>
+                        </div>
+
+                        <!-- TAB 3: ArUco -->
+                        <div id="tab-aruco" class="tab-content">
+                            <div class="control-group">
+                                <label for="tracking-mode-select">Modo de Seguimiento de Marcador:</label>
+                                <div class="select-container" style="position: relative; display: flex; align-items: center;">
+                                    <select id="tracking-mode-select" style="width: 100%; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--card-border); border-radius: 8px; color: var(--text-primary); padding: 10px 12px; font-family: var(--font-mono); font-size: 0.95rem; outline: none; transition: border-color 0.2s; cursor: pointer; -webkit-appearance: none; -moz-appearance: none; appearance: none;">
+                                        <option value="dual" selected>Dual Concentración (ID 0 Grande & ID 1 Chico)</option>
+                                        <option value="single_small">Solo Marcador Chico Standalone (ID 1)</option>
+                                        <option value="single_large">Solo Marcador Grande Standalone (ID 0)</option>
+                                    </select>
+                                    <span style="position: absolute; right: 14px; pointer-events: none; color: var(--accent-blue); font-size: 0.8rem;">▼</span>
+                                </div>
+                                <span class="control-hint">Permite probar un único marcador en el centro de forma aislada, o ambos combinados.</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="poly-approx-slider">Aproximación Poligonal: <span id="poly-approx-val">0.055</span></label>
+                                <input type="range" id="poly-approx-slider" min="0.01" max="0.12" step="0.005" value="0.055">
+                                <span class="control-hint">Aumentar para detectar marcadores con papel curvado/cilíndrico.</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="min-perimeter-slider">Perímetro Mínimo Marcador: <span id="min-perimeter-val">0.015</span></label>
+                                <input type="range" id="min-perimeter-slider" min="0.005" max="0.08" step="0.005" value="0.015">
+                                <span class="control-hint">Define el tamaño mínimo relativo para capturar el marcador a distancia.</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="max-border-err-slider">Error Máx. Borde Negro: <span id="max-border-err-val">0.50</span></label>
+                                <input type="range" id="max-border-err-slider" min="0.1" max="0.9" step="0.05" value="0.50">
+                                <span class="control-hint">Porcentaje máximo de píxeles no negros tolerados en el contorno.</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="err-correction-slider">Corrección de Errores (Bits): <span id="err-correction-val">0.80</span></label>
+                                <input type="range" id="err-correction-slider" min="0.1" max="1.0" step="0.05" value="0.80">
+                                <span class="control-hint">Tasa de bits corruptos que OpenCV intentará autocorregir en la matriz.</span>
+                            </div>
+
+                            <hr style="border: 0; border-top: 1px solid var(--card-border); margin: 15px 0;">
+
+                            <div class="control-group-row" style="display: flex; justify-content: space-between; align-items: center;">
+                                <label for="roi-checkbox" style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">Seguimiento por Región (ROI):</label>
+                                <input type="checkbox" id="roi-checkbox" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-cyan);">
+                            </div>
+                            <span class="control-hint" style="margin-top: -8px;">Búsqueda acotada localmente para optimizar CPU y evitar falsos contornos.</span>
+
+                            <div class="control-group-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+                                <label for="kalman-checkbox" style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">Suavizado Filtro de Kalman:</label>
+                                <input type="checkbox" id="kalman-checkbox" checked style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-cyan);">
+                            </div>
+                            <span class="control-hint" style="margin-top: -8px;">Evita oscilaciones y predice la posición durante oclusiones.</span>
+
+                            <div class="control-group">
+                                <label for="kalman-q-slider">Ruido de Proceso Kalman (Q): <span id="kalman-q-val">0.050</span></label>
+                                <input type="range" id="kalman-q-slider" min="0.005" max="0.3" step="0.005" value="0.050">
+                                <span class="control-hint">Valores pequeños suavizan la trayectoria; valores grandes responden más rápido.</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="kalman-r-slider">Ruido de Medida Kalman (R): <span id="kalman-r-val">0.15</span></label>
+                                <input type="range" id="kalman-r-slider" min="0.01" max="0.8" step="0.01" value="0.15">
+                                <span class="control-hint">Sensibilidad ante ruidos y vibraciones detectadas por la cámara.</span>
+                            </div>
+                        </div>
+
+                        <!-- TAB 4: Cámara -->
+                        <div id="tab-cam" class="tab-content">
+                            <div class="control-group">
+                                <label for="camera-select">Cámara de Origen:</label>
+                                <div class="select-container" style="position: relative; display: flex; align-items: center;">
+                                    <select id="camera-select" style="width: 100%; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--card-border); border-radius: 8px; color: var(--text-primary); padding: 10px 12px; font-family: var(--font-mono); font-size: 0.95rem; outline: none; transition: border-color 0.2s; cursor: pointer; -webkit-appearance: none; -moz-appearance: none; appearance: none;">
+                                        <option value="0" selected>Escaneando cámaras...</option>
+                                    </select>
+                                    <span style="position: absolute; right: 14px; pointer-events: none; color: var(--accent-blue); font-size: 0.8rem;">▼</span>
+                                </div>
+                                <span class="control-hint">Selecciona la cámara web de la lista de dispositivos detectados al inicio del servidor.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Panel: Three.js viewport -->
+            <section class="panel right-panel">
+                <div class="card viewport-card">
+                    <div class="card-header">
+                        <h2>ESPACIO 3D VIRTUAL</h2>
+                        <div class="viewport-controls">
+                            <span class="control-hint">Usa el mouse para rotar (clic izq), mover (clic der) y zoom (rueda).</span>
+                        </div>
+                    </div>
+                    <div class="viewport-container" id="three-container">
+                        <!-- Three.js Canvas will be inserted here -->
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Bottom Panel: Telemetry data -->
+        <footer class="app-footer">
+            <div class="telemetry-grid">
+                <!-- X coordinate -->
+                <div class="telemetry-item" id="telemetry-x">
+                    <span class="telemetry-label">EJE X (Izquierda / Derecha)</span>
+                    <span class="telemetry-val">0.00 <span class="telemetry-unit">cm</span></span>
+                    <div class="direction-bar">
+                        <div class="bar-fill" id="bar-x"></div>
+                    </div>
+                </div>
+
+                <!-- Y coordinate -->
+                <div class="telemetry-item" id="telemetry-y">
+                    <span class="telemetry-label">EJE Y (Abajo / Arriba)</span>
+                    <span class="telemetry-val">0.00 <span class="telemetry-unit">cm</span></span>
+                    <div class="direction-bar">
+                        <div class="bar-fill" id="bar-y"></div>
+                    </div>
+                </div>
+
+                <!-- Z coordinate -->
+                <div class="telemetry-item" id="telemetry-z">
+                    <span class="telemetry-label">EJE Z (Profundidad / Distancia)</span>
+                    <span class="telemetry-val">0.00 <span class="telemetry-unit">cm</span></span>
+                    <div class="direction-bar">
+                        <div class="bar-fill" id="bar-z"></div>
+                    </div>
+                </div>
+
+                <!-- Rotations (Pitch, Yaw, Roll) -->
+                <div class="telemetry-item rotation-item">
+                    <span class="telemetry-label">ROTACIONES (Grados)</span>
+                    <div class="rotations-container">
+                        <div class="rot-val">PITCH (Tilt): <span id="val-pitch">0°</span></div>
+                        <div class="rot-val">YAW (Giro): <span id="val-yaw">0°</span></div>
+                        <div class="rot-val">ROLL (Lado): <span id="val-roll">0°</span></div>
+                    </div>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
