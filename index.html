@@ -23,9 +23,15 @@
                 <span class="logo-accent">//</span>
                 <h1>SKYTRACK <span class="sub-logo">3D WORKSPACE</span></h1>
             </div>
-            <div class="status-indicator">
-                <span class="status-dot disconnected" id="connection-dot"></span>
-                <span class="status-text" id="connection-text">Desconectado</span>
+            <div class="header-controls" style="display: flex; align-items: center; gap: 16px;">
+                <button id="btn-toggle-logging" class="btn-logging" disabled>
+                    <span class="logging-dot"></span>
+                    <span id="logging-text">Iniciar Toma de Datos</span>
+                </button>
+                <div class="status-indicator">
+                    <span class="status-dot disconnected" id="connection-dot"></span>
+                    <span class="status-text" id="connection-text">Desconectado</span>
+                </div>
             </div>
         </header>
 

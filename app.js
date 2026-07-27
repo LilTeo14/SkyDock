@@ -35,6 +35,9 @@ const focalVal = document.getElementById('focal-val');
 const cameraSelect = document.getElementById('camera-select');
 const btnZero = document.getElementById('btn-zero-calibrate');
 const btnReset = document.getElementById('btn-reset-calibration');
+const btnToggleLogging = document.getElementById('btn-toggle-logging');
+const loggingText = document.getElementById('logging-text');
+let isLogging = false;
 
 // Video settings DOM elements
 const autoContrastCheckbox = document.getElementById('auto-contrast-checkbox');
@@ -344,6 +347,9 @@ function connectWebSocket() {
         isConnected = true;
         connectionDot.className = "status-dot connected";
         connectionText.innerText = "Conectado";
+        if (btnToggleLogging) {
+            btnToggleLogging.disabled = false;
+        }
         
         // Send current calibration settings on load
         sendCalibration();
@@ -375,6 +381,18 @@ function connectWebSocket() {
         // Update webcam frame
         if (data.frame) {
             webcamStream.src = "data:image/jpeg;base64," + data.frame;
+        }
+
+        // Update logging state button
+        if (data.is_logging !== undefined && btnToggleLogging && loggingText) {
+            isLogging = data.is_logging;
+            if (isLogging) {
+                btnToggleLogging.classList.add('recording');
+                loggingText.innerText = "Detener Toma de Datos";
+            } else {
+                btnToggleLogging.classList.remove('recording');
+                loggingText.innerText = "Iniciar Toma de Datos";
+            }
         }
 
         // Update tracking status
@@ -447,6 +465,16 @@ function cleanupConnection() {
     trackingBadge.className = "card-badge lost";
     trackingBadge.innerText = "Sin Señal";
     webcamStream.src = "";
+    
+    // Reset logging button state
+    if (btnToggleLogging) {
+        btnToggleLogging.disabled = true;
+        btnToggleLogging.classList.remove('recording');
+    }
+    if (loggingText) {
+        loggingText.innerText = "Iniciar Toma de Datos";
+    }
+    isLogging = false;
 }
 
 // Update DOM Telemetry values & progress bars
@@ -784,6 +812,18 @@ function setupEvents() {
         
         console.log("Calibration, video settings, advanced parameters and camera reset to defaults.");
     });
+
+    // Toggle manual data logging
+    if (btnToggleLogging) {
+        btnToggleLogging.addEventListener('click', () => {
+            if (!isConnected) return;
+            if (!isLogging) {
+                ws.send(JSON.stringify({ type: "start_logging" }));
+            } else {
+                ws.send(JSON.stringify({ type: "stop_logging" }));
+            }
+        });
+    }
 }
 
 // Entry Point

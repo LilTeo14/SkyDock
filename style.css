@@ -563,3 +563,75 @@ body {
     flex-direction: column;
     gap: 14px;
 }
+
+/* Data logging button styling */
+.btn-logging {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--card-border);
+    border-radius: 30px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    outline: none;
+    letter-spacing: 1px;
+}
+
+.btn-logging:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.20);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.05);
+}
+
+.btn-logging:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.logging-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--text-secondary);
+    display: inline-block;
+    transition: all 0.3s ease;
+}
+
+/* Logging state: Recording */
+.btn-logging.recording {
+    background: rgba(244, 63, 94, 0.15);
+    border-color: rgba(244, 63, 94, 0.4);
+    color: var(--accent-red);
+    box-shadow: 0 0 15px rgba(244, 63, 94, 0.15);
+}
+
+.btn-logging.recording:hover {
+    background: rgba(244, 63, 94, 0.25);
+    border-color: rgba(244, 63, 94, 0.6);
+}
+
+.btn-logging.recording .logging-dot {
+    background-color: var(--accent-red);
+    box-shadow: 0 0 8px var(--accent-red), 0 0 15px var(--accent-red);
+    animation: pulse-red 1.5s infinite;
+}
+
+@keyframes pulse-red {
+    0% {
+        box-shadow: 0 0 5px var(--accent-red), 0 0 10px var(--accent-red);
+    }
+    50% {
+        box-shadow: 0 0 12px var(--accent-red), 0 0 20px var(--accent-red);
+        background-color: #ff6b8b;
+    }
+    100% {
+        box-shadow: 0 0 5px var(--accent-red), 0 0 10px var(--accent-red);
+    }
+}
