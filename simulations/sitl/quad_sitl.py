@@ -259,13 +259,17 @@ class Quad8InchSITL:
                     log_event(f"[SITL] Motores {'ARMADOS' if self.armed else 'DESARMADOS'}")
                 elif command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
                     mode_map = {0: "STABILIZE", 4: "GUIDED", 5: "LOITER", 9: "LAND"}
-                    self.flight_mode = mode_map.get(int(msg.param2), "GUIDED")
-                    log_event(f"[SITL] Modo cambiado a: {self.flight_mode}")
+                    new_mode = mode_map.get(int(msg.param2), "GUIDED")
+                    if self.flight_mode != new_mode:
+                        self.flight_mode = new_mode
+                        log_event(f"[SITL] Modo cambiado a: {self.flight_mode}")
 
             elif msg_type == 'SET_MODE':
                 mode_map = {0: "STABILIZE", 4: "GUIDED", 5: "LOITER", 9: "LAND"}
-                self.flight_mode = mode_map.get(int(msg.custom_mode), "GUIDED")
-                log_event(f"[SITL] Modo cambiado a: {self.flight_mode}")
+                new_mode = mode_map.get(int(msg.custom_mode), "GUIDED")
+                if self.flight_mode != new_mode:
+                    self.flight_mode = new_mode
+                    log_event(f"[SITL] Modo cambiado a: {self.flight_mode}")
 
             elif msg_type == 'SET_POSITION_TARGET_LOCAL_NED':
                 if msg.coordinate_frame == mavutil.mavlink.MAV_FRAME_BODY_NED:

@@ -83,9 +83,19 @@ class SimulationDashboard:
 
             if rvec is not None and tvec is not None:
                 try:
-                    cv2.drawFrameAxes(cam_bgr, camera_params.camera_matrix,
-                                      camera_params.distortion_coeffs,
-                                      rvec, tvec, 0.08, 2)
+                    # Dibujar ejes de coordenadas con escala dinámica sin advertencias de OpenCV C++
+                    dist_m = float(np.linalg.norm(tvec))
+                    axis_len = max(0.015, min(0.06, dist_m * 0.35))
+                    axis_pts = np.array([[0, 0, 0], [axis_len, 0, 0], [0, axis_len, 0], [0, 0, -axis_len]], dtype=np.float64)
+                    img_pts, _ = cv2.projectPoints(axis_pts, rvec, tvec, camera_params.camera_matrix, camera_params.distortion_coeffs)
+                    img_pts = img_pts.reshape(-1, 2)
+                    o = tuple(img_pts[0].astype(int))
+                    px, py, pz = tuple(img_pts[1].astype(int)), tuple(img_pts[2].astype(int)), tuple(img_pts[3].astype(int))
+                    h_f, w_f = cam_bgr.shape[:2]
+                    if 0 <= o[0] < w_f and 0 <= o[1] < h_f:
+                        cv2.line(cam_bgr, o, px, (0, 0, 255), 2) # X (Rojo / Forward)
+                        cv2.line(cam_bgr, o, py, (0, 255, 0), 2) # Y (Verde / Right)
+                        cv2.line(cam_bgr, o, pz, (255, 0, 0), 2) # Z (Azul / Down)
                 except Exception:
                     pass
 

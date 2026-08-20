@@ -159,9 +159,10 @@ class RadxaCompanionNode:
                         yaw_rate_rad_s=yaw_rate_cmd
                     )
                     
-                    # Si alcanzamos contacto final, solicitar cambio a LAND o desarmar
+                    # Si alcanzamos contacto final, solicitar cambio a LAND una sola vez
                     if state == LandingState.TOUCHDOWN and current_altitude <= 0.12:
-                        self.mavlink.set_mode("LAND")
+                        if flight_mode != "LAND":
+                            self.mavlink.set_mode("LAND")
 
             # 6. Registrar datos en CSV
             if self.csv_writer is not None:
