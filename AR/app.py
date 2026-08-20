@@ -11,7 +11,6 @@ from http.server import SimpleHTTPRequestHandler
 import socketserver
 import csv
 from datetime import datetime
-from scipy.spatial.transform import Rotation as R_scipy
 
 class FlightTrackerLogger:
     def __init__(self):
@@ -28,32 +27,29 @@ class FlightTrackerLogger:
             self.file = open(filename, mode='w', newline='')
             self.writer = csv.writer(self.file)
             
-            # Encabezados incluyendo cuaterniones y euler
+            # Encabezados claros para comparar RAW vs KALMAN
             self.writer.writerow([
                 "timestamp", "frame_id", "detected", "tracked_marker", "kalman_active",
                 "raw_x", "raw_y", "raw_z", 
                 "kalman_x", "kalman_y", "kalman_z",
-                "qw", "qx", "qy", "qz",
                 "pitch", "yaw", "roll"
             ])
             self.is_logging = True
             print(f"📊 Logging iniciado: {filename}")
 
-    def log_frame(self, frame_id, detected, marker_id, kalman_active, raw_pos, kalman_pos, quat, euler_angles):
+    def log_frame(self, frame_id, detected, marker_id, kalman_active, raw_pos, kalman_pos, euler_angles):
         with self.lock:
             if not self.is_logging or self.writer is None:
                 return
                 
             rx, ry, rz = raw_pos
             kx, ky, kz = kalman_pos
-            qw, qx, qy, qz = quat
             pitch, yaw, roll = euler_angles
 
             self.writer.writerow([
                 time.time(), frame_id, detected, marker_id, kalman_active,
                 f"{rx:.4f}", f"{ry:.4f}", f"{rz:.4f}",
                 f"{kx:.4f}", f"{ky:.4f}", f"{kz:.4f}",
-                f"{qw:.4f}", f"{qx:.4f}", f"{qy:.4f}", f"{qz:.4f}",
                 f"{pitch:.2f}", f"{yaw:.2f}", f"{roll:.2f}"
             ])
 
@@ -88,13 +84,15 @@ latest_data = {
 }
 data_lock = threading.Lock()
 
-marker_size = 0.075
+# Define the physical size of the ArUco marker (in meters)
+# Default is 5cm (0.05m). The user can adjust this via calibration.
+marker_size = 0.05
 target_marker_id = 0
 
 # Kalman Filter 1D class
 class Kalman1D:
     def __init__(self, process_noise=0.05, measurement_noise=0.15, error_covariance=1.0):
-        self.x = 0.0  # state (position / quat component)
+        self.x = 0.0  # state (position)
         self.v = 0.0  # state (velocity)
         self.P = np.array([[error_covariance, 0.0],
                            [0.0, error_covariance]], dtype=np.float32)
@@ -124,45 +122,45 @@ class Kalman1D:
         self.v = 0.0
         self.P = np.eye(2, dtype=np.float32) * 1.0
 
-# 3 Kalman Filters for Position (x, y, z)
+# Initialize 6 Kalman Filters for pose tracking (x, y, z, rx, ry, rz)
 kf_x = Kalman1D()
 kf_y = Kalman1D()
 kf_z = Kalman1D()
+kf_rx = Kalman1D()
+kf_ry = Kalman1D()
+kf_rz = Kalman1D()
 
-# 4 Kalman Filters for Quaternion Orientation (qw, qx, qy, qz)
-kf_qw = Kalman1D()
-kf_qx = Kalman1D()
-kf_qy = Kalman1D()
-kf_qz = Kalman1D()
-
+# Track how many frames we've predicted without measurements
 kalman_predict_count = 0
 MAX_KALMAN_PREDICT_FRAMES = 15
 last_measurement_time = None
 
-def reset_kalman(x, y, z, qw, qx, qy, qz):
+def reset_kalman(x, y, z, rx, ry, rz):
     kf_x.reset(x)
     kf_y.reset(y)
     kf_z.reset(z)
-    kf_qw.reset(qw)
-    kf_qx.reset(qx)
-    kf_qy.reset(qy)
-    kf_qz.reset(qz)
+    kf_rx.reset(rx)
+    kf_ry.reset(ry)
+    kf_rz.reset(rz)
 
 def update_kalman_params(q, r):
-    for kf in [kf_x, kf_y, kf_z, kf_qw, kf_qx, kf_qy, kf_qz]:
+    for kf in [kf_x, kf_y, kf_z, kf_rx, kf_ry, kf_rz]:
         kf.Q = np.array([[q, 0.0], [0.0, q]], dtype=np.float32)
         kf.R = r
 
-focal_length_factor = 1.6
+# Camera focal length scaling factor (approximation)
+focal_length_factor = 0.8
 
-brightness = 0.0        
-contrast = 1.0          
-auto_contrast = True    
-show_processed = False  
-clahe_clip_limit = 3.0  
-clahe_grid_size = 8     
-noise_reduction = 0     
+# Video preprocessing and advanced parameters
+brightness = 0.0        # -100 to 100
+contrast = 1.0          # 0.5 to 3.0
+auto_contrast = True    # Use CLAHE
+show_processed = False  # If true, stream preprocessed/grayscale/thresholded frame to client
+clahe_clip_limit = 3.0  # CLAHE clip limit
+clahe_grid_size = 8     # CLAHE tile grid size (8x8)
+noise_reduction = 0     # 0 = Off, 3 = 3x3 median blur, etc.
 
+# New robust parameters
 roi_tracking_enabled = False
 bilateral_filtering = True
 bilateral_d = 5
@@ -173,16 +171,19 @@ morphology_kernel_size = 3
 kalman_enabled = True
 kalman_q = 0.05
 kalman_r = 0.15
-tracking_mode = "dual"
+tracking_mode = "dual" # "dual", "single_small", "single_large"
 
+# ROI tracking state
 roi_active = False
-roi_box = None  
+roi_box = None  # [x1, y1, x2, y2]
 
-min_marker_perimeter_rate = 0.005
+# ArUco detection parameters
+min_marker_perimeter_rate = 0.015
 poly_approx_accuracy_rate = 0.055
 max_erroneous_bits_border = 0.5
 error_correction_rate = 0.8
 
+# Camera source state
 cap = None
 current_camera_index = 0
 requested_camera_index = 0
@@ -190,12 +191,14 @@ camera_changed = False
 is_switching_camera = False
 available_cameras = []
 
+# Scan available cameras at startup
 def scan_available_cameras():
     global available_cameras
     available_cameras = []
     print("Camera Scanner: Scanning indices 0 to 4...")
     for idx in range(5):
         try:
+            # Try DirectShow first on Windows as it is faster and doesn't block
             temp_cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
             if temp_cap is None or not temp_cap.isOpened():
                 temp_cap = cv2.VideoCapture(idx)
@@ -210,19 +213,27 @@ def scan_available_cameras():
     
     print(f"Camera Scanner: Found active cameras: {available_cameras}")
     if not available_cameras:
-        available_cameras = [0]
+        available_cameras = [0]  # Fallback to index 0
 
+# Set up ArUco Detector with optimized parameters for phone screens and small/far/curved markers
 dict_type = cv2.aruco.DICT_4X4_50
 if hasattr(cv2.aruco, 'getPredefinedDictionary'):
     dictionary = cv2.aruco.getPredefinedDictionary(dict_type)
     parameters = cv2.aruco.DetectorParameters()
+    
+    # Enable corner refinement for high accuracy and stability
     parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+    # Allow smaller markers to be detected (further away)
     parameters.minMarkerPerimeterRate = 0.015
+    # Customize thresholding for handling screen reflections
     parameters.adaptiveThreshWinSizeMin = 3
     parameters.adaptiveThreshWinSizeMax = 23
     parameters.adaptiveThreshWinSizeStep = 4
+    # Relax polygon approximation to allow curved/deformed edges
     parameters.polygonalApproxAccuracyRate = 0.055
+    # Be more tolerant to errors in the black border
     parameters.maxErroneousBitsInBorderRate = 0.5
+    # Increase error correction capability
     parameters.errorCorrectionRate = 0.8
     
     detector = cv2.aruco.ArucoDetector(dictionary, parameters)
@@ -231,11 +242,14 @@ if hasattr(cv2.aruco, 'getPredefinedDictionary'):
 else:
     dictionary = cv2.aruco.Dictionary_get(dict_type)
     parameters = cv2.aruco.DetectorParameters_create()
+    
+    # Enable corner refinement
     parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
     parameters.minMarkerPerimeterRate = 0.015
     parameters.adaptiveThreshWinSizeMin = 3
     parameters.adaptiveThreshWinSizeMax = 23
     parameters.adaptiveThreshWinSizeStep = 4
+    # Relax polygon approximation
     parameters.polygonalApproxAccuracyRate = 0.055
     parameters.maxErroneousBitsInBorderRate = 0.5
     parameters.errorCorrectionRate = 0.8
@@ -243,6 +257,8 @@ else:
     def detect_markers(image):
         return cv2.aruco.detectMarkers(image, dictionary, parameters=parameters)
 
+
+# Safe function to draw axis
 def draw_axes(img, K, dist, rvec, tvec, length):
     try:
         if hasattr(cv2, 'drawFrameAxes'):
@@ -252,42 +268,30 @@ def draw_axes(img, K, dist, rvec, tvec, length):
     except Exception as e:
         print(f"Error drawing axis: {e}")
 
-# Convierte Matriz de Rotación 3x3 a Cuaternión [qw, qx, qy, qz]
-def matrix_to_quaternion(R_mat):
-    rot = R_scipy.from_matrix(R_mat)
-    qx, qy, qz, qw = rot.as_quat() # Scipy devuelve [x, y, z, w]
-    return np.array([qw, qx, qy, qz], dtype=np.float32)
-
-# Convierte Cuaternión [qw, qx, qy, qz] a Matriz 3x3 y Ángulos Euler (radians)
-def quaternion_to_matrix_and_euler(q):
-    # Normalizar para garantizar cuaternión unitario puro
-    norm = np.linalg.norm(q)
-    if norm < 1e-6:
-        q = np.array([1.0, 0.0, 0.0, 0.0])
-    else:
-        q = q / norm
-        
-    qw, qx, qy, qz = q
-    rot = R_scipy.from_quat([qx, qy, qz, qw])
-    R_mat = rot.as_matrix()
-    
-    # Extraer Euler pitch, yaw, roll
-    sy = math.sqrt(R_mat[0, 0] * R_mat[0, 0] + R_mat[1, 0] * R_mat[1, 0])
+# Helper to convert rotation matrix to Euler angles
+def get_euler_angles(R):
+    sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
     singular = sy < 1e-6
     if not singular:
-        x = math.atan2(R_mat[2, 1], R_mat[2, 2])
-        y = math.atan2(-R_mat[2, 0], sy)
-        z = math.atan2(R_mat[1, 0], R_mat[0, 0])
+        x = math.atan2(R[2, 1], R[2, 2])
+        y = math.atan2(-R[2, 0], sy)
+        z = math.atan2(R[1, 0], R[0, 0])
     else:
-        x = math.atan2(-R_mat[1, 2], R_mat[1, 1])
-        y = math.atan2(-R_mat[2, 0], sy)
+        x = math.atan2(-R[1, 2], R[1, 1])
+        y = math.atan2(-R[2, 0], sy)
         z = 0
-        
-    return R_mat, (x, y, z), q
+    return x, y, z # pitch, yaw, roll (radians)
 
+# HTTP static file server thread
 def run_http_server():
     PORT = 8000
     class QuietHandler(SimpleHTTPRequestHandler):
+        def end_headers(self):
+            self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
+            super().end_headers()
+
         def log_message(self, format, *args):
             pass
 
@@ -296,8 +300,11 @@ def run_http_server():
         print(f"HTTP Server: Running on http://localhost:{PORT}")
         httpd.serve_forever()
 
+# WebSocket server handler
 async def ws_handler(websocket):
     print(f"WebSocket Client Connected: {websocket.remote_address}")
+    
+    # Send the list of available cameras right away
     try:
         await websocket.send(json.dumps({
             "type": "camera_list",
@@ -306,6 +313,7 @@ async def ws_handler(websocket):
     except Exception as e:
         print(f"Error sending camera list: {e}")
     
+    # Task to send tracking data to client at 30 FPS
     async def send_loop():
         try:
             while True:
@@ -316,6 +324,7 @@ async def ws_handler(websocket):
         except asyncio.CancelledError:
             pass
             
+    # Task to receive calibration settings from client
     async def recv_loop():
         global marker_size, focal_length_factor, brightness, contrast, auto_contrast, show_processed, clahe_clip_limit, clahe_grid_size, min_marker_perimeter_rate, poly_approx_accuracy_rate, max_erroneous_bits_border, error_correction_rate, noise_reduction, requested_camera_index, camera_changed
         global roi_tracking_enabled, bilateral_filtering, morphology_enabled, morphology_kernel_size, kalman_enabled, kalman_q, kalman_r, tracking_mode
@@ -326,7 +335,7 @@ async def ws_handler(websocket):
                     if data.get("type") == "calibrate":
                         marker_size = float(data["marker_size"])
                         focal_length_factor = float(data["focal_length_factor"])
-                        print(f"Calibration updated: marker_size={marker_size}m, focal_length={focal_length_factor}")
+                        print(f"Calibration updated by client: marker_size={marker_size}m, focal_length_factor={focal_length_factor}")
                     elif data.get("type") == "settings":
                         brightness = float(data["brightness"])
                         contrast = float(data["contrast"])
@@ -351,9 +360,12 @@ async def ws_handler(websocket):
                         tracking_mode = str(data.get("tracking_mode", tracking_mode))
                         
                         update_kalman_params(kalman_q, kalman_r)
+                        
+                        print(f"Settings updated: brightness={brightness}, contrast={contrast}, auto_contrast={auto_contrast}, show_processed={show_processed}, min_perimeter={min_marker_perimeter_rate}, poly_approx={poly_approx_accuracy_rate}, max_border_err={max_erroneous_bits_border}, err_correction={error_correction_rate}, roi_enabled={roi_tracking_enabled}, bilateral={bilateral_filtering}, morphology={morphology_enabled}, kalman={kalman_enabled}, tracking_mode={tracking_mode}")
                     elif data.get("type") == "change_camera":
                         requested_camera_index = int(data["index"])
                         camera_changed = True
+                        print(f"Camera change requested: index={requested_camera_index}")
                     elif data.get("type") == "start_logging":
                         logger.start_session()
                     elif data.get("type") == "stop_logging":
@@ -363,6 +375,7 @@ async def ws_handler(websocket):
         except asyncio.CancelledError:
             pass
             
+    # Run both loops concurrently
     send_task = asyncio.create_task(send_loop())
     recv_task = asyncio.create_task(recv_loop())
     
@@ -374,6 +387,8 @@ async def ws_handler(websocket):
         send_task.cancel()
         recv_task.cancel()
 
+
+# WebSocket server thread
 def run_ws_server():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -381,14 +396,16 @@ def run_ws_server():
     async def start():
         async with websockets.serve(ws_handler, "localhost", 8765):
             print("WebSocket Server: Running on ws://localhost:8765")
-            await asyncio.Future()
+            await asyncio.Future() # Keep running
             
     loop.run_until_complete(start())
 
+# Helper to open camera in a separate thread to prevent blocking the main process on Windows
 def async_open_camera(index):
     global cap, current_camera_index, is_switching_camera
     print(f"Async Camera Opener: Initiating thread to open camera {index}...")
     try:
+        # Try DirectShow first on Windows as it is faster and doesn't block
         temp_cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
         if temp_cap is None or not temp_cap.isOpened():
             temp_cap = cv2.VideoCapture(index)
@@ -409,9 +426,11 @@ def async_open_camera(index):
                 print(f"Async Camera Opener: Successfully switched to camera {current_camera_index}")
             else:
                 temp_cap.release()
+                print(f"Async Camera Opener ERROR: Could not read frame from camera {index}")
         else:
             if temp_cap is not None:
                 temp_cap.release()
+            print(f"Async Camera Opener ERROR: Could not open camera {index}")
     except Exception as e:
         print(f"Async Camera Opener EXCEPTION: {e}")
     finally:
@@ -420,7 +439,7 @@ def async_open_camera(index):
 def run_camera_tracking():
     global latest_data, marker_size, focal_length_factor, brightness, contrast, auto_contrast, show_processed, clahe_clip_limit, clahe_grid_size, noise_reduction, min_marker_perimeter_rate, poly_approx_accuracy_rate, max_erroneous_bits_border, error_correction_rate, current_camera_index, requested_camera_index, camera_changed, is_switching_camera, cap
     global roi_tracking_enabled, bilateral_filtering, bilateral_d, bilateral_sigma_color, bilateral_sigma_space, morphology_enabled, morphology_kernel_size, kalman_enabled, kalman_q, kalman_r, roi_active, roi_box, kalman_predict_count, last_measurement_time, tracking_mode
-    global frame_count
+    global frame_count  # <--- Hacemos global el contador de frames
     
     cap = None
     for idx in [0, 1, 2]:
@@ -438,7 +457,7 @@ def run_camera_tracking():
             temp_cap.release()
 
     if cap is None:
-        print("Camera Tracker WARNING: No webcam could be opened!")
+        print("Camera Tracker WARNING: No webcam could be opened! Emulating offline status.")
     else:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -449,7 +468,7 @@ def run_camera_tracking():
     
     while True:
         loop_start = time.time()
-        frame_count += 1
+        frame_count += 1  # <--- Incrementamos el frame_count
         
         if camera_changed:
             camera_changed = False
@@ -462,6 +481,8 @@ def run_camera_tracking():
             dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
             cv2.putText(dummy_frame, f"Cargando Camara {requested_camera_index}...", (160, 220), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (220, 180, 50), 2, cv2.LINE_AA)
+            cv2.putText(dummy_frame, "Por favor espera, iniciando dispositivo de video...", (110, 260), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1, cv2.LINE_AA)
             
             _, buffer = cv2.imencode('.jpg', dummy_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
             frame_base64 = base64.b64encode(buffer).decode('utf-8')
@@ -483,6 +504,7 @@ def run_camera_tracking():
             try:
                 ret, frame = cap.read()
             except Exception as e:
+                print(f"Error reading from camera: {e}")
                 ret = False
             
         if ret and frame is not None:
@@ -562,9 +584,8 @@ def run_camera_tracking():
             
             detected = False
             tx = ty = tz = 0.0
-            raw_tx = raw_ty = raw_tz = 0.0
+            raw_tx = raw_ty = raw_tz = 0.0  # <--- Inicializamos variables RAW
             pitch = yaw = roll = 0.0
-            quat_out = [1.0, 0.0, 0.0, 0.0]
             R_flat = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
             tracked_marker = -1
             kalman_active = False
@@ -618,48 +639,43 @@ def run_camera_tracking():
                         R, _ = cv2.Rodrigues(rvec)
                         tvec_landing = tvec + R @ offset_local
                         
+                        # Capturamos la posición cruda devuelta por OpenCV
                         tx = float(tvec_landing[0][0])
                         ty = float(tvec_landing[1][0])
                         tz = float(tvec_landing[2][0])
-                        raw_tx, raw_ty, raw_tz = tx, ty, tz
+                        raw_tx, raw_ty, raw_tz = tx, ty, tz  # <--- Guardado del RAW real
                         
-                        # Convertir matriz R de OpenCV a Cuaternión [qw, qx, qy, qz]
-                        q_raw = matrix_to_quaternion(R)
-                        qw, qx, qy, qz = q_raw
+                        rx = float(rvec[0][0])
+                        ry = float(rvec[1][0])
+                        rz = float(rvec[2][0])
                         
                         if kalman_enabled:
                             now = time.time()
                             dt = 1.0 / 30.0 if last_measurement_time is None else (now - last_measurement_time)
                             last_measurement_time = now
                             
-                            # Alineación de signo para evitar "quaternion hemisphere flip" (+q y -q son la misma rotación)
-                            if kalman_predict_count == 0:
-                                current_q_state = np.array([kf_qw.x, kf_qx.x, kf_qy.x, kf_qz.x])
-                                if np.dot(current_q_state, q_raw) < 0:
-                                    qw, qx, qy, qz = -qw, -qx, -qy, -qz
-                            
                             if kalman_predict_count > 0:
-                                reset_kalman(tx, ty, tz, qw, qx, qy, qz)
+                                reset_kalman(tx, ty, tz, rx, ry, rz)
                                 kalman_predict_count = 0
                             else:
                                 kf_x.predict(dt); kf_y.predict(dt); kf_z.predict(dt)
-                                kf_qw.predict(dt); kf_qx.predict(dt); kf_qy.predict(dt); kf_qz.predict(dt)
+                                kf_rx.predict(dt); kf_ry.predict(dt); kf_rz.predict(dt)
                                 
                                 kf_x.update(tx); kf_y.update(ty); kf_z.update(tz)
-                                kf_qw.update(qw); kf_qx.update(qx); kf_qy.update(qy); kf_qz.update(qz)
+                                kf_rx.update(rx); kf_ry.update(ry); kf_rz.update(rz)
                                 
                             tx, ty, tz = kf_x.x, kf_y.x, kf_z.x
-                            q_filt = np.array([kf_qw.x, kf_qx.x, kf_qy.x, kf_qz.x], dtype=np.float32)
+                            rx, ry, rz = kf_rx.x, kf_ry.x, kf_rz.x
+                            
+                            rvec_smooth = np.array([[rx], [ry], [rz]], dtype=np.float32)
+                            R, _ = cv2.Rodrigues(rvec_smooth)
+                            tvec_drawn = tvec_landing - R @ offset_local
                         else:
-                            q_filt = q_raw
+                            tvec_drawn = tvec
+                            rvec_smooth = rvec
                             
-                        # Reconstruir Matriz R y ángulos de Euler desde el cuaternión filtrado
-                        R_smooth, (pitch, yaw, roll), quat_out = quaternion_to_matrix_and_euler(q_filt)
-                        
-                        rvec_smooth, _ = cv2.Rodrigues(R_smooth)
-                        tvec_drawn = tvec_landing - R_smooth @ offset_local
-                            
-                        R_flat = R_smooth.flatten().tolist()
+                        R_flat = R.flatten().tolist()
+                        pitch, yaw, roll = get_euler_angles(R)
                         
                         if roi_tracking_enabled:
                             c_pts = corners[idx][0]
@@ -684,13 +700,15 @@ def run_camera_tracking():
                     kalman_predict_count += 1
                     
                     kf_x.predict(dt); kf_y.predict(dt); kf_z.predict(dt)
-                    kf_qw.predict(dt); kf_qx.predict(dt); kf_qy.predict(dt); kf_qz.predict(dt)
+                    kf_rx.predict(dt); kf_ry.predict(dt); kf_rz.predict(dt)
                     
                     tx, ty, tz = kf_x.x, kf_y.x, kf_z.x
-                    q_filt = np.array([kf_qw.x, kf_qx.x, kf_qy.x, kf_qz.x], dtype=np.float32)
+                    rx, ry, rz = kf_rx.x, kf_ry.x, kf_rz.x
                     
-                    R_smooth, (pitch, yaw, roll), quat_out = quaternion_to_matrix_and_euler(q_filt)
-                    R_flat = R_smooth.flatten().tolist()
+                    rvec_smooth = np.array([[rx], [ry], [rz]], dtype=np.float32)
+                    R, _ = cv2.Rodrigues(rvec_smooth)
+                    R_flat = R.flatten().tolist()
+                    pitch, yaw, roll = get_euler_angles(R)
                     
                     detected = True
                     kalman_active = True
@@ -701,7 +719,7 @@ def run_camera_tracking():
                     if kalman_predict_count >= MAX_KALMAN_PREDICT_FRAMES:
                         last_measurement_time = None
 
-            # Registro CSV extendido con Posición, Cuaterniones y Euler
+            # <--- LUGAR CORRECTO DEL LOGGING: justo antes de codificar la imagen JPEG
             logger.log_frame(
                 frame_id=frame_count,
                 detected=detected,
@@ -709,7 +727,6 @@ def run_camera_tracking():
                 kalman_active=kalman_active,
                 raw_pos=(raw_tx, raw_ty, raw_tz),
                 kalman_pos=(tx, ty, tz),
-                quat=quat_out,
                 euler_angles=(pitch, yaw, roll)
             )
 
@@ -743,14 +760,18 @@ def run_camera_tracking():
         time.sleep(sleep_time)
 
 if __name__ == "__main__":
+    # Scan cameras first
     scan_available_cameras()
     
+    # Start HTTP Server thread
     http_thread = threading.Thread(target=run_http_server, daemon=True)
     http_thread.start()
     
+    # Start WebSocket Server thread
     ws_thread = threading.Thread(target=run_ws_server, daemon=True)
     ws_thread.start()
     
+    # Start Camera Tracking loop in the main thread
     try:
         run_camera_tracking()
     except KeyboardInterrupt:

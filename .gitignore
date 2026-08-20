@@ -12,3 +12,9 @@ env/
 Thumbs.db
 db.db
 .DS_Store
+
+# Temporary logs and telemetry data
+radxa_flight_log_*.csv
+simulations/logs/*.csv
+simulations/logs/*.log
+!simulations/logs/.gitkeep
